@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+chat_data.db
+*.db
+
+# Node / React
+nanolens/node_modules/
+nanolens/build/
+nanolens/.env
+nanolens/.env.local
+
+# OS
+.DS_Store
+Thumbs.db
