@@ -27,11 +27,11 @@ groq_client    = Groq(api_key=GROQ_API_KEY)
 pc             = Pinecone(api_key=PINECONE_API_KEY)
 pinecone_index = pc.Index(INDEX_NAME)  # direct connection
 
-# ── HuggingFace Inference API for embeddings ─────────────────
-# Free, no local model, no torch, no RAM overhead
+# ── HuggingFace Inference API v2 for embeddings ──────────────
+# Free, no local model, no RAM overhead
 # Get your free token at huggingface.co → Settings → Access Tokens
 HF_API_TOKEN = os.environ.get("HF_API_TOKEN", "")
-HF_EMBED_URL = "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2"
+HF_EMBED_URL = "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2/pipeline/feature-extraction"
 
 # ── Domain system prompt ─────────────────────────────────────
 SYSTEM_PROMPT = """You are an expert research assistant specialising in
@@ -79,38 +79,42 @@ def get_index():
 
 def get_embedding(text: str) -> list:
     """
-    Calls HuggingFace Inference API to get embeddings.
+    Calls HuggingFace Inference API v2 (router) for embeddings.
     Model: all-MiniLM-L6-v2 → dim=384.
-    Free tier, no local model needed.
+    Requires HF_API_TOKEN — get free at huggingface.co/settings/tokens
     """
     import requests as req
-    headers = {"Content-Type": "application/json"}
-    if HF_API_TOKEN:
-        headers["Authorization"] = f"Bearer {HF_API_TOKEN}"
+    import numpy as np
+
+    if not HF_API_TOKEN:
+        raise ValueError("HF_API_TOKEN env var is not set. Get a free token at huggingface.co/settings/tokens")
+
+    headers = {
+        "Authorization": f"Bearer {HF_API_TOKEN}",
+        "Content-Type": "application/json",
+    }
     resp = req.post(
         HF_EMBED_URL,
         headers=headers,
-        json={"inputs": str(text), "options": {"wait_for_model": True}},
+        json={"inputs": str(text)},
         timeout=60,
     )
     resp.raise_for_status()
     result = resp.json()
-    # New HF API returns: list of token embeddings (nested) → mean pool
-    # or a flat list of floats → use directly
+
+    # Normalise whatever shape HF returns into a flat dim=384 vector
     if isinstance(result, list):
+        # flat float vector [0.1, 0.2, ...]
         if isinstance(result[0], float):
-            # flat vector — use directly
             return result
-        elif isinstance(result[0], list):
-            if isinstance(result[0][0], float):
-                # [sentence][dim] → take first sentence
-                return result[0]
-            else:
-                # [sentence][token][dim] → mean pool over tokens
-                import numpy as np
-                arr = np.array(result[0])  # shape: (tokens, dim)
-                return arr.mean(axis=0).tolist()
-    raise ValueError(f"Unexpected HF embedding response format: {type(result)}")
+        # [[0.1, 0.2, ...]] — one sentence
+        if isinstance(result[0], list) and isinstance(result[0][0], float):
+            return result[0]
+        # [[[...]]] — token-level, mean pool
+        if isinstance(result[0], list) and isinstance(result[0][0], list):
+            arr = np.array(result[0])   # (tokens, dim)
+            return arr.mean(axis=0).tolist()
+    raise ValueError(f"Unexpected HF embedding response: {result}")
 
 
 # ════════════════════════════════════════════════════════════
