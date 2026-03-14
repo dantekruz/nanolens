@@ -56,7 +56,7 @@ export default function Sidebar({ papers, activePaper, onSelectPaper, onToast })
           <label>LLM</label>
           <input
             className="config-input"
-            value="llama-3.1-8b-instant (Groq)"
+            value="llama3-70b (Groq)"
             readOnly
           />
         </div>

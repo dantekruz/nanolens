@@ -1,3 +1,8 @@
+# ============================================================
+# rag_engine.py
+# Pure RAG logic — no Streamlit. Called by backend.py (FastAPI)
+# ============================================================
+
 import io
 import os
 import re
@@ -8,21 +13,19 @@ import pandas as pd
 import pdfplumber
 from docx import Document
 from groq import Groq
-from pinecone import Pinecone, ServerlessSpec
-from sentence_transformers import SentenceTransformer
+from pinecone import Pinecone
 
-# ── Config (fill in your keys) ───────────────────────────────
-GROQ_API_KEY     = os.getenv("GROQ_API_KEY")
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-INDEX_NAME       = os.getenv("INDEX_NAME", "nanoemulsion-research")
-DB_PATH          = os.getenv("DB_PATH", "chat_data.db")
-EMBED_DIM        = int(os.getenv("EMBED_DIM", 384))
-GROQ_MODEL       = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+# ── Config — reads from env vars (set in Render dashboard)
+#    or falls back to hardcoded values for local dev ──────────
+GROQ_API_KEY     = os.environ.get("GROQ_API_KEY",     "")
+PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY", "")
+INDEX_NAME       = os.environ.get("INDEX_NAME",       "quickstart")
+DB_PATH          = "chat_data.db"
 
 # ── Clients ──────────────────────────────────────────────────
 groq_client    = Groq(api_key=GROQ_API_KEY)
 pc             = Pinecone(api_key=PINECONE_API_KEY)
-pinecone_index = None   # lazy-initialised in get_index()
+pinecone_index = pc.Index(INDEX_NAME)  # direct connection
 
 _embedding_model = None  # lazy-loaded
 
@@ -50,6 +53,9 @@ SECTION_HEADERS = [
     "in vivo","stability","acknowledgement",
 ]
 
+# ════════════════════════════════════════════════════════════
+# INIT HELPERS
+# ════════════════════════════════════════════════════════════
 
 def get_index():
     global pinecone_index
@@ -70,13 +76,23 @@ def get_index():
 def get_embedding_model():
     global _embedding_model
     if _embedding_model is None:
-        _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+        # fastembed is lightweight (~50MB) — no PyTorch/CUDA needed
+        from fastembed import TextEmbedding
+        print("⏳ Loading embedding model (first time only)...")
+        _embedding_model = TextEmbedding("BAAI/bge-small-en-v1.5")  # dim=384
+        print("✅ Embedding model loaded.")
     return _embedding_model
 
 
 def get_embedding(text: str) -> list:
-    return get_embedding_model().encode(str(text)).tolist()
+    model = get_embedding_model()
+    embeddings = list(model.embed([str(text)]))
+    return embeddings[0].tolist()
 
+
+# ════════════════════════════════════════════════════════════
+# TEXT UTILITIES
+# ════════════════════════════════════════════════════════════
 
 def chunk_text(text_input, max_words=400) -> list[str]:
     chunks = []
@@ -113,6 +129,9 @@ def clean_columns(columns):
     return cleaned
 
 
+# ════════════════════════════════════════════════════════════
+# EXTRACTION
+# ════════════════════════════════════════════════════════════
 
 def extract_pdf(file_bytes: bytes) -> list[str]:
     all_text, all_tables, combined_cols = [], [], []
@@ -167,6 +186,9 @@ def extract_csv(file_bytes: bytes) -> pd.DataFrame:
     return df
 
 
+# ════════════════════════════════════════════════════════════
+# INDEXING  (called by /api/upload)
+# ════════════════════════════════════════════════════════════
 
 def index_document(file_bytes: bytes, filename: str, namespace: str) -> dict:
     """
@@ -253,6 +275,10 @@ def index_document(file_bytes: bytes, filename: str, namespace: str) -> dict:
     else:
         raise ValueError(f"Unsupported file type: {ext}")
 
+
+# ════════════════════════════════════════════════════════════
+# CHAT  (called by /api/chat)
+# ════════════════════════════════════════════════════════════
 
 def _build_conversation_history(history: list[dict]) -> str:
     lines = []
@@ -451,6 +477,11 @@ def answer_question(question: str, namespace: str, history: list[dict]) -> dict:
 
     return {"answer": answer, "mode": mode, "reason": reason, "sources": sources}
 
+
+# ════════════════════════════════════════════════════════════
+# UTILITY QUERIES
+# ════════════════════════════════════════════════════════════
+
 def list_namespaces() -> list[str]:
     """Return all indexed paper namespaces from SQLite."""
     try:
@@ -462,3 +493,21 @@ def list_namespaces() -> list[str]:
         return tables
     except Exception:
         return []
+
+
+def delete_chat_history(namespace: str) -> dict:
+    """
+    Clears all chat data for a namespace from SQLite.
+    Pinecone vectors are preserved — the paper stays searchable.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (namespace,))
+    exists = cursor.fetchone()
+    if not exists:
+        conn.close()
+        return {"success": True, "namespace": namespace, "message": "No table found — nothing to delete."}
+    cursor.execute(f"DROP TABLE IF EXISTS '{namespace}'")
+    conn.commit()
+    conn.close()
+    return {"success": True, "namespace": namespace, "message": f"Chat history for '{namespace}' deleted successfully."}

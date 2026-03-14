@@ -3,7 +3,9 @@
 // Calls FastAPI backend running at localhost:8000
 // ═══════════════════════════════════════════════
 
-const BASE_URL = "http://localhost:8000"
+// In production, set REACT_APP_BACKEND_URL in Vercel dashboard
+// In local dev, it falls back to localhost:8000
+const BASE_URL = process.env.REACT_APP_BACKEND_URL || "http://localhost:8000"
 
 // ── Helper ────────────────────────────────────────────────
 async function apiFetch(path, options = {}) {
@@ -80,4 +82,15 @@ export async function sendChatMessage({ question, namespace, history }) {
 // ════════════════════════════════════════════════════════
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms))
+}
+
+// ════════════════════════════════════════════════════════
+// DELETE CHAT  — clears server-side chat history + memory
+// ════════════════════════════════════════════════════════
+export async function deleteChat(namespace) {
+  const data = await apiFetch(`/api/delete-chat/${encodeURIComponent(namespace)}`, {
+    method: 'DELETE',
+  })
+  return data
+  // Returns: { success, namespace, message }
 }
