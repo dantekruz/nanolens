@@ -10,13 +10,10 @@ const BASE_URL = "https://nanolens.onrender.com"
 // ── Helper ────────────────────────────────────────────────
 async function apiFetch(path, options = {}) {
   const url = `${BASE_URL}${path}`
-  const res  = await fetch(url, options)
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(err.detail || `Request failed: ${res.status}`)
-  }
-  return res.json()
-}
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 120000) // 2 min timeout
+  const res = await fetch(url, { ...options, signal: controller.signal })
+    .finally(() => clearTimeout(timeout))
 
 // ════════════════════════════════════════════════════════
 // NAMESPACES  — fetch all indexed papers on startup
