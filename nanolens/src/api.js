@@ -5,7 +5,7 @@
 
 // In production, set REACT_APP_BACKEND_URL in Vercel dashboard
 // In local dev, it falls back to localhost:8000
-const BASE_URL = process.env.REACT_APP_BACKEND_URL || "http://localhost:8000"
+const BASE_URL = "https://nanolens.onrender.com"
 
 // ── Helper ────────────────────────────────────────────────
 async function apiFetch(path, options = {}) {

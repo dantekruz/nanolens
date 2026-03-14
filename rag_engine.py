@@ -31,7 +31,7 @@ pinecone_index = pc.Index(INDEX_NAME)  # direct connection
 # Free, no local model, no torch, no RAM overhead
 # Get your free token at huggingface.co → Settings → Access Tokens
 HF_API_TOKEN = os.environ.get("HF_API_TOKEN", "")
-HF_EMBED_URL = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
+HF_EMBED_URL = "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2"
 
 # ── Domain system prompt ─────────────────────────────────────
 SYSTEM_PROMPT = """You are an expert research assistant specialising in
@@ -80,25 +80,37 @@ def get_index():
 def get_embedding(text: str) -> list:
     """
     Calls HuggingFace Inference API to get embeddings.
-    Model: all-MiniLM-L6-v2 → dim=384, same as before.
-    Free tier: 1000 requests/day. No local model needed.
+    Model: all-MiniLM-L6-v2 → dim=384.
+    Free tier, no local model needed.
     """
     import requests as req
-    headers = {}
+    headers = {"Content-Type": "application/json"}
     if HF_API_TOKEN:
         headers["Authorization"] = f"Bearer {HF_API_TOKEN}"
     resp = req.post(
         HF_EMBED_URL,
         headers=headers,
         json={"inputs": str(text), "options": {"wait_for_model": True}},
-        timeout=30,
+        timeout=60,
     )
     resp.raise_for_status()
     result = resp.json()
-    # HF returns nested list for sentences — flatten if needed
-    if isinstance(result[0], list):
-        return result[0]
-    return result
+    # New HF API returns: list of token embeddings (nested) → mean pool
+    # or a flat list of floats → use directly
+    if isinstance(result, list):
+        if isinstance(result[0], float):
+            # flat vector — use directly
+            return result
+        elif isinstance(result[0], list):
+            if isinstance(result[0][0], float):
+                # [sentence][dim] → take first sentence
+                return result[0]
+            else:
+                # [sentence][token][dim] → mean pool over tokens
+                import numpy as np
+                arr = np.array(result[0])  # shape: (tokens, dim)
+                return arr.mean(axis=0).tolist()
+    raise ValueError(f"Unexpected HF embedding response format: {type(result)}")
 
 
 # ════════════════════════════════════════════════════════════
