@@ -30,9 +30,8 @@ pinecone_index = pc.Index(INDEX_NAME)  # direct connection
 # ── HuggingFace Inference API v2 for embeddings ──────────────
 # Free, no local model, no RAM overhead
 # Get your free token at huggingface.co → Settings → Access Tokens
-HF_API_TOKEN = os.environ.get("HF_API_TOKEN", "")
-HF_EMBED_URL = "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2/pipeline/feature-extraction"
-
+# ── Pinecone Inference API for embeddings ─────────────────────
+# Uses your existing Pinecone key — no new service needed
 # ── Domain system prompt ─────────────────────────────────────
 SYSTEM_PROMPT = """You are an expert research assistant specialising in
 nanoemulsion science and pharmaceutical nanotechnology.
@@ -78,6 +77,19 @@ def get_index():
 
 
 def get_embedding(text: str) -> list:
+    """
+    Uses Pinecone's Inference API to generate embeddings.
+    Model: multilingual-e5-large → dim=1024
+    No extra key needed — uses PINECONE_API_KEY.
+    """
+    from pinecone import Pinecone
+    pc = Pinecone(api_key=PINECONE_API_KEY)
+    result = pc.inference.embed(
+        model="multilingual-e5-large",
+        inputs=[str(text)],
+        parameters={"input_type": "passage", "truncate": "END"}
+    )
+    return result[0].values
     """
     Calls HuggingFace Inference API v2 (router) for embeddings.
     Model: all-MiniLM-L6-v2 → dim=384.
