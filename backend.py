@@ -17,13 +17,7 @@ app = FastAPI(title="NanoLens API", version="1.0.0")
 
 @app.on_event("startup")
 async def startup_event():
-    """Warm up fastembed model after port is bound (non-blocking)."""
-    import threading
-    def warm_up():
-        print("🔥 Warming up fastembed model in background...")
-        rag_engine.get_embedding_model()
-        print("✅ Embedding model ready.")
-    threading.Thread(target=warm_up, daemon=True).start()
+    print("✅ NanoLens API ready. Embeddings via HuggingFace Inference API.")
 
 # ── CORS ─────────────────────────────────────────────────────
 ALLOWED_ORIGINS = [

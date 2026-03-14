@@ -27,7 +27,11 @@ groq_client    = Groq(api_key=GROQ_API_KEY)
 pc             = Pinecone(api_key=PINECONE_API_KEY)
 pinecone_index = pc.Index(INDEX_NAME)  # direct connection
 
-_embedding_model = None  # lazy-loaded
+# ── HuggingFace Inference API for embeddings ─────────────────
+# Free, no local model, no torch, no RAM overhead
+# Get your free token at huggingface.co → Settings → Access Tokens
+HF_API_TOKEN = os.environ.get("HF_API_TOKEN", "")
+HF_EMBED_URL = "https://api-inference.huggingface.co/pipeline/feature-extraction/sentence-transformers/all-MiniLM-L6-v2"
 
 # ── Domain system prompt ─────────────────────────────────────
 SYSTEM_PROMPT = """You are an expert research assistant specialising in
@@ -73,21 +77,28 @@ def get_index():
     return pinecone_index
 
 
-def get_embedding_model():
-    global _embedding_model
-    if _embedding_model is None:
-        # fastembed is lightweight (~50MB) — no PyTorch/CUDA needed
-        from fastembed import TextEmbedding
-        print("⏳ Loading embedding model (first time only)...")
-        _embedding_model = TextEmbedding("BAAI/bge-small-en-v1.5")  # dim=384
-        print("✅ Embedding model loaded.")
-    return _embedding_model
-
-
 def get_embedding(text: str) -> list:
-    model = get_embedding_model()
-    embeddings = list(model.embed([str(text)]))
-    return embeddings[0].tolist()
+    """
+    Calls HuggingFace Inference API to get embeddings.
+    Model: all-MiniLM-L6-v2 → dim=384, same as before.
+    Free tier: 1000 requests/day. No local model needed.
+    """
+    import requests as req
+    headers = {}
+    if HF_API_TOKEN:
+        headers["Authorization"] = f"Bearer {HF_API_TOKEN}"
+    resp = req.post(
+        HF_EMBED_URL,
+        headers=headers,
+        json={"inputs": str(text), "options": {"wait_for_model": True}},
+        timeout=30,
+    )
+    resp.raise_for_status()
+    result = resp.json()
+    # HF returns nested list for sentences — flatten if needed
+    if isinstance(result[0], list):
+        return result[0]
+    return result
 
 
 # ════════════════════════════════════════════════════════════
