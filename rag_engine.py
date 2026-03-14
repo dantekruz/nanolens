@@ -344,7 +344,7 @@ Reply ONLY with valid JSON, no other text:
 {{"mode": "analytical" or "semantic", "reason": "one sentence"}}
 """
     resp = groq_client.chat.completions.create(
-        model="llama3-8b-8192",
+        model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}],
         temperature=0,
     )
@@ -387,7 +387,7 @@ Write ONE line of pandas code to answer the question.
 Return ONLY the code inside ```python ... ```.
 """
     code_resp = groq_client.chat.completions.create(
-        model="llama3-8b-8192",
+        model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": code_prompt}],
         temperature=0,
     )
@@ -414,7 +414,7 @@ Pandas result:
 Summarise clearly in English. Highlight any nanoemulsion parameter values.
 """
     summ = groq_client.chat.completions.create(
-        model="llama3-70b-8192",
+        model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": summary_prompt}],
         temperature=0.2,
     )
@@ -461,7 +461,7 @@ Instructions:
 - Interpret results against benchmarks where applicable.
 """
         resp = groq_client.chat.completions.create(
-            model="llama3-70b-8192",
+            model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
         )
@@ -484,7 +484,7 @@ Instructions:
 - End with "📌 Key Takeaway".
 """
     final_resp = groq_client.chat.completions.create(
-        model="llama3-70b-8192",
+        model="llama-3.3-70b-versatile",
         messages=[{"role": "user", "content": final_prompt}],
         temperature=0.2,
     )
