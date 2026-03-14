@@ -79,15 +79,13 @@ def get_index():
 def get_embedding(text: str) -> list:
     """
     Uses Pinecone's Inference API to generate embeddings.
-    Model: multilingual-e5-large → dim=1024
+    Model: llama-text-embed-v2 with dim=384 to match existing index.
     No extra key needed — uses PINECONE_API_KEY.
     """
-    from pinecone import Pinecone
-    pc = Pinecone(api_key=PINECONE_API_KEY)
     result = pc.inference.embed(
-        model="multilingual-e5-large",
+        model="llama-text-embed-v2",
         inputs=[str(text)],
-        parameters={"input_type": "passage", "truncate": "END"}
+        parameters={"input_type": "passage", "truncate": "END", "dimension": 384}
     )
     return result[0].values
     """
