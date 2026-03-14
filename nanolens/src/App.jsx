@@ -27,7 +27,7 @@ export default function App() {
       })
       .catch(() => {
         setBackendOk(false)
-        showToast('⚠️ Cannot reach backend — is it running on port 8000?', 'error')
+        showToast('⚠️ llama-3.1-8b-instant (Groq)reach backend — is it running on port 8000?', 'error')
       })
   }, []) // eslint-disable-line
 
