@@ -15,8 +15,7 @@ from docx import Document
 from groq import Groq
 from pinecone import Pinecone
 
-# ── Config — reads from env vars (set in Render dashboard)
-#    or falls back to hardcoded values for local dev ──────────
+# ── Config ───────────────────────────────────────────────────
 GROQ_API_KEY     = os.environ.get("GROQ_API_KEY",     "")
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY", "")
 INDEX_NAME       = os.environ.get("INDEX_NAME",       "quickstart")
@@ -25,14 +24,12 @@ DB_PATH          = "chat_data.db"
 # ── Clients ──────────────────────────────────────────────────
 groq_client    = Groq(api_key=GROQ_API_KEY)
 pc             = Pinecone(api_key=PINECONE_API_KEY)
-pinecone_index = pc.Index(INDEX_NAME)  # direct connection
+pinecone_index = pc.Index(INDEX_NAME)
 
-# ── Embeddings via Pinecone Inference API ────────────────────
-# Uses your existing Pinecone key — no extra setup needed
-# Model: multilingual-e5-large → dim=1024
+# ── Embed model ───────────────────────────────────────────────
 EMBED_MODEL = "multilingual-e5-large"
 
-# ── Domain system prompt ─────────────────────────────────────
+# ── System prompt ─────────────────────────────────────────────
 SYSTEM_PROMPT = """You are an expert research assistant specialising in
 nanoemulsion science and pharmaceutical nanotechnology.
 
@@ -57,31 +54,14 @@ SECTION_HEADERS = [
 ]
 
 # ════════════════════════════════════════════════════════════
-# INIT HELPERS
+# HELPERS
 # ════════════════════════════════════════════════════════════
 
 def get_index():
-    global pinecone_index
-    if pinecone_index is not None:
-        return pinecone_index
-    existing = [idx["name"] for idx in pc.list_indexes()]
-    if INDEX_NAME not in existing:
-        pc.create_index(
-            name=INDEX_NAME,
-            dimension=1024,
-            metric="cosine",
-            spec=ServerlessSpec(cloud="aws", region="us-east-1"),
-        )
-    pinecone_index = pc.Index(INDEX_NAME)
     return pinecone_index
 
 
 def get_embedding(text: str) -> list:
-    """
-    Uses Pinecone Inference API for embeddings.
-    Model: multilingual-e5-large → dim=1024
-    Uses your existing PINECONE_API_KEY — no extra setup.
-    """
     result = pc.inference.embed(
         model=EMBED_MODEL,
         inputs=[str(text)],
@@ -90,17 +70,13 @@ def get_embedding(text: str) -> list:
     return result[0].values
 
 
-# ════════════════════════════════════════════════════════════
-# TEXT UTILITIES
-# ════════════════════════════════════════════════════════════
-
-def chunk_text(text_input, max_words=400) -> list[str]:
+def chunk_text(text_input, max_words=400) -> list:
     chunks = []
     items = text_input if isinstance(text_input, list) else [text_input]
     for text in items:
         words = str(text).split()
         for i in range(0, len(words), max_words):
-            chunks.append(" ".join(words[i : i + max_words]))
+            chunks.append(" ".join(words[i:i + max_words]))
     return [c for c in chunks if c.strip()]
 
 
@@ -133,10 +109,9 @@ def clean_columns(columns):
 # EXTRACTION
 # ════════════════════════════════════════════════════════════
 
-def extract_pdf(file_bytes: bytes) -> list[str]:
+def extract_pdf(file_bytes: bytes) -> list:
     all_text, all_tables, combined_cols = [], [], []
     current_section = "General"
-
     with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
         for page_num, page in enumerate(pdf.pages):
             page_text = page.extract_text() or ""
@@ -149,7 +124,6 @@ def extract_pdf(file_bytes: bytes) -> list[str]:
                     tagged.append(line)
                 tagged_text = f"[Section: {current_section} | Page: {page_num+1}]\n" + "\n".join(tagged)
                 all_text.append(tagged_text.strip())
-
             for table in page.extract_tables():
                 if len(table) > 1:
                     combined_cols.extend(table[0])
@@ -161,13 +135,12 @@ def extract_pdf(file_bytes: bytes) -> list[str]:
         if len(row) < len(safe_cols):
             row.extend([""] * (len(safe_cols) - len(row)))
         elif len(row) > len(safe_cols):
-            row = row[: len(safe_cols)]
+            row = row[:len(safe_cols)]
         table_rows.append(", ".join(str(r) for r in row))
-
     return table_rows + all_text
 
 
-def extract_docx(file_bytes: bytes) -> list[str]:
+def extract_docx(file_bytes: bytes) -> list:
     doc = Document(io.BytesIO(file_bytes))
     return [p.text.strip() for p in doc.paragraphs if p.text.strip()]
 
@@ -187,69 +160,48 @@ def extract_csv(file_bytes: bytes) -> pd.DataFrame:
 
 
 # ════════════════════════════════════════════════════════════
-# INDEXING  (called by /api/upload)
+# INDEXING
 # ════════════════════════════════════════════════════════════
 
 def index_document(file_bytes: bytes, filename: str, namespace: str) -> dict:
-    """
-    Index a PDF, CSV, or DOCX into Pinecone + SQLite.
-    Returns { success, namespace, chunks, sections }
-    """
-    idx   = get_index()
-    ext   = filename.rsplit(".", 1)[-1].lower()
-    conn  = sqlite3.connect(DB_PATH)
+    idx  = get_index()
+    ext  = filename.rsplit(".", 1)[-1].lower()
+    conn = sqlite3.connect(DB_PATH)
 
     if ext == "pdf":
         rows   = extract_pdf(file_bytes)
         df_out = pd.DataFrame({"text": rows})
         df_out.to_sql(namespace, conn, if_exists="replace", index=False)
         conn.close()
-
-        chunks = chunk_text(rows)
+        chunks   = chunk_text(rows)
         sections = set(
             re.search(r"\[Section: ([^\|]+)", t).group(1).strip()
             for t in rows if re.search(r"\[Section: ([^\|]+)", t)
         )
-
         for i, chunk in enumerate(chunks, 1):
-            emb = get_embedding(chunk)
-            idx.upsert(
-                vectors=[{
-                    "id": f"{namespace}-chunk-{i}",
-                    "values": emb,
-                    "metadata": {"text": chunk, "chunk_id": i, "total_chunks": len(chunks)},
-                }],
-                namespace=namespace,
-            )
-
-        return {"success": True, "namespace": namespace, "chunks": len(chunks),
-                "sections": sorted(sections)}
+            idx.upsert(vectors=[{
+                "id": f"{namespace}-chunk-{i}",
+                "values": get_embedding(chunk),
+                "metadata": {"text": chunk, "chunk_id": i, "total_chunks": len(chunks)},
+            }], namespace=namespace)
+        return {"success": True, "namespace": namespace, "chunks": len(chunks), "sections": sorted(sections)}
 
     elif ext == "csv":
         df = extract_csv(file_bytes)
         df.to_sql(namespace, conn, if_exists="replace", index=False)
         conn.close()
-
         def row_to_sentence(row):
             return ". ".join(f"{c}: {v}" for c, v in row.items()
                              if pd.notna(v) and str(v).strip() not in ("", "0"))
-
-        total, upserted = len(df), 0
+        upserted = 0
         for i, row in df.iterrows():
-            sentence = row_to_sentence(row)
-            chunks   = chunk_text(sentence)
-            for j, chunk in enumerate(chunks):
-                emb = get_embedding(chunk)
-                idx.upsert(
-                    vectors=[{
-                        "id": f"{namespace}-row-{i}-chunk-{j}",
-                        "values": emb,
-                        "metadata": {"text": chunk, "row_id": i, "chunk_id": j},
-                    }],
-                    namespace=namespace,
-                )
+            for j, chunk in enumerate(chunk_text(row_to_sentence(row))):
+                idx.upsert(vectors=[{
+                    "id": f"{namespace}-row-{i}-chunk-{j}",
+                    "values": get_embedding(chunk),
+                    "metadata": {"text": chunk, "row_id": i, "chunk_id": j},
+                }], namespace=namespace)
                 upserted += 1
-
         return {"success": True, "namespace": namespace, "chunks": upserted, "sections": []}
 
     elif ext == "docx":
@@ -257,19 +209,13 @@ def index_document(file_bytes: bytes, filename: str, namespace: str) -> dict:
         df_out = pd.DataFrame({"text": rows})
         df_out.to_sql(namespace, conn, if_exists="replace", index=False)
         conn.close()
-
         chunks = chunk_text(" ".join(rows))
         for i, chunk in enumerate(chunks, 1):
-            emb = get_embedding(chunk)
-            idx.upsert(
-                vectors=[{
-                    "id": f"{namespace}-chunk-{i}",
-                    "values": emb,
-                    "metadata": {"text": chunk, "chunk_id": i, "total_chunks": len(chunks)},
-                }],
-                namespace=namespace,
-            )
-
+            idx.upsert(vectors=[{
+                "id": f"{namespace}-chunk-{i}",
+                "values": get_embedding(chunk),
+                "metadata": {"text": chunk, "chunk_id": i, "total_chunks": len(chunks)},
+            }], namespace=namespace)
         return {"success": True, "namespace": namespace, "chunks": len(chunks), "sections": []}
 
     else:
@@ -277,22 +223,19 @@ def index_document(file_bytes: bytes, filename: str, namespace: str) -> dict:
 
 
 # ════════════════════════════════════════════════════════════
-# CHAT  (called by /api/chat)
+# CHAT
 # ════════════════════════════════════════════════════════════
 
-def _build_conversation_history(history: list[dict]) -> str:
+def _build_conversation_history(history: list) -> str:
     lines = []
     for msg in history[-5:]:
         role    = msg.get("role", "user")
         content = msg.get("content", "")
-        if role == "user":
-            lines.append(f"User: {content}")
-        else:
-            lines.append(f"Assistant: {content}")
+        lines.append(f"{'User' if role == 'user' else 'Assistant'}: {content}")
     return "\n".join(lines)
 
 
-def _decide_mode(question: str, history_text: str) -> tuple[str, str]:
+def _decide_mode(question: str, history_text: str):
     prompt = f"""
 Previous conversation:
 {history_text}
@@ -312,7 +255,6 @@ Reply ONLY with valid JSON, no other text:
         temperature=0,
     )
     raw = resp.choices[0].message.content.strip()
-    # strip markdown code fences if present
     raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("```").strip()
     try:
         d = json.loads(raw)
@@ -330,9 +272,14 @@ def _analytical_answer(question: str, namespace: str, history_text: str) -> str:
     finally:
         conn.close()
 
-    # coerce types
+    # ── Fixed: errors="coerce" replaces deprecated errors="ignore" ──
     for col in df.columns:
-        df[col] = pd.to_numeric(df[col], errors="ignore")
+        try:
+            converted = pd.to_numeric(df[col], errors="coerce")
+            if converted.notna().sum() > 0:
+                df[col] = converted
+        except Exception:
+            pass
         if df[col].dtype == "object":
             try:
                 df[col] = pd.to_datetime(df[col], errors="raise")
@@ -359,7 +306,7 @@ Return ONLY the code inside ```python ... ```.
     code     = match.group(1).strip() if match else raw_code.strip()
 
     try:
-        result = eval(code, {"df": df, "pd": pd})  # noqa: S307
+        result = eval(code, {"df": df, "pd": pd})
         if isinstance(result, pd.DataFrame):
             result_text = result.to_markdown()
         elif isinstance(result, pd.Series):
@@ -369,27 +316,19 @@ Return ONLY the code inside ```python ... ```.
     except Exception as e:
         return f"⚠️ Pandas eval failed: {e}"
 
-    summary_prompt = f"""
-User asked: "{question}"
-Pandas result:
-{result_text}
-
-Summarise clearly in English. Highlight any nanoemulsion parameter values.
-"""
     summ = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": summary_prompt}],
+        messages=[{"role": "user", "content": f'User asked: "{question}"\nPandas result:\n{result_text}\n\nSummarise clearly in English. Highlight nanoemulsion parameter values.'}],
         temperature=0.2,
     )
     return summ.choices[0].message.content.strip()
 
 
-def _semantic_answer(question: str, namespace: str, history_text: str) -> tuple[str, list]:
+def _semantic_answer(question: str, namespace: str, history_text: str):
     idx       = get_index()
     query_emb = get_embedding(question)
-
-    result  = idx.query(vector=query_emb, top_k=10, namespace=namespace, include_metadata=True)
-    matches = result.get("matches", [])
+    result    = idx.query(vector=query_emb, top_k=10, namespace=namespace, include_metadata=True)
+    matches   = result.get("matches", [])
 
     keywords  = [w.lower() for w in question.split()]
     re_ranked = []
@@ -403,12 +342,13 @@ def _semantic_answer(question: str, namespace: str, history_text: str) -> tuple[
 
     re_ranked = sorted(re_ranked, key=lambda x: x[0], reverse=True)[:15]
 
-    # batch summarise
-    batch_size, summaries = 5, []
-    for i in range(0, len(re_ranked), batch_size):
-        batch   = re_ranked[i : i + batch_size]
+    summaries = []
+    for i in range(0, len(re_ranked), 5):
+        batch   = re_ranked[i:i + 5]
         context = "\n".join(f"- {t[2]}" for t in batch)
-        prompt  = f"""{SYSTEM_PROMPT}
+        resp = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": f"""{SYSTEM_PROMPT}
 
 Previous conversation:
 {history_text}
@@ -418,19 +358,14 @@ Current question: "{question}"
 Extracted data:
 {context}
 
-Instructions:
-- Only use the given content — do NOT invent details.
-- Highlight nanoemulsion parameter values.
-- Interpret results against benchmarks where applicable.
-"""
-        resp = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
+Only use given content. Highlight nanoemulsion parameter values. Compare against benchmarks."""}],
             temperature=0.3,
         )
         summaries.append(resp.choices[0].message.content.strip())
 
-    final_prompt = f"""{SYSTEM_PROMPT}
+    final_resp = groq_client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": f"""{SYSTEM_PROMPT}
 
 Previous conversation:
 {history_text}
@@ -440,42 +375,32 @@ Current question: {question}
 Synthesised insights:
 {chr(10).join(summaries)}
 
-Instructions:
-- Do NOT invent details.
-- Use tables for multi-formulation comparisons.
-- Use section headings (Formulation Composition, Characterization, Stability…).
-- End with "📌 Key Takeaway".
-"""
-    final_resp = groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": final_prompt}],
+Do NOT invent details. Use tables for multi-formulation comparisons.
+Use section headings. End with "📌 Key Takeaway"."""}],
         temperature=0.2,
     )
     answer  = final_resp.choices[0].message.content.strip()
     sources = [
-        {"id": int(r[1]) if str(r[1]).isdigit() else i,
-         "score": round(r[0], 3),
-         "text": r[2]}
+        {"id": int(r[1]) if str(r[1]).isdigit() else i, "score": round(r[0], 3), "text": r[2]}
         for i, r in enumerate(re_ranked[:5])
     ]
     return answer, sources
 
 
-def answer_question(question: str, namespace: str, history: list[dict]) -> dict:
+def answer_question(question: str, namespace: str, history: list) -> dict:
     history_text = _build_conversation_history(history)
     mode, reason = _decide_mode(question, history_text)
 
-    # Fall back to semantic if SQLite table doesn't exist
-    # (ephemeral filesystem on Render resets on redeploy)
+    # Fall back to semantic if SQLite table missing (Render ephemeral filesystem)
     if mode == "analytical":
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (namespace,))
-        table_exists = cursor.fetchone()
+        exists = cursor.fetchone()
         conn.close()
-        if not table_exists:
-            mode = "semantic"
-            reason = "Falling back to semantic — SQLite table not found (re-upload to enable analytical mode)"
+        if not exists:
+            mode   = "semantic"
+            reason = "Falling back to semantic — SQLite table not found"
 
     if mode == "analytical":
         answer  = _analytical_answer(question, namespace, history_text)
@@ -485,12 +410,12 @@ def answer_question(question: str, namespace: str, history: list[dict]) -> dict:
 
     return {"answer": answer, "mode": mode, "reason": reason, "sources": sources}
 
+
 # ════════════════════════════════════════════════════════════
-# UTILITY QUERIES
+# UTILITIES
 # ════════════════════════════════════════════════════════════
 
-def list_namespaces() -> list[str]:
-    """Return all indexed paper namespaces from SQLite."""
+def list_namespaces() -> list:
     try:
         conn   = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -503,10 +428,6 @@ def list_namespaces() -> list[str]:
 
 
 def delete_chat_history(namespace: str) -> dict:
-    """
-    Clears all chat data for a namespace from SQLite.
-    Pinecone vectors are preserved — the paper stays searchable.
-    """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (namespace,))
@@ -517,4 +438,4 @@ def delete_chat_history(namespace: str) -> dict:
     cursor.execute(f"DROP TABLE IF EXISTS '{namespace}'")
     conn.commit()
     conn.close()
-    return {"success": True, "namespace": namespace, "message": f"Chat history for '{namespace}' deleted successfully."}
+    return {"success": True, "namespace": namespace, "message": f"Chat history for '{namespace}' deleted."}
