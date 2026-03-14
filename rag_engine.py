@@ -462,12 +462,20 @@ Instructions:
 
 
 def answer_question(question: str, namespace: str, history: list[dict]) -> dict:
-    """
-    Main entry point for /api/chat.
-    Returns { answer, mode, reason, sources }
-    """
-    history_text        = _build_conversation_history(history)
-    mode, reason        = _decide_mode(question, history_text)
+    history_text = _build_conversation_history(history)
+    mode, reason = _decide_mode(question, history_text)
+
+    # Fall back to semantic if SQLite table doesn't exist
+    # (ephemeral filesystem on Render resets on redeploy)
+    if mode == "analytical":
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (namespace,))
+        table_exists = cursor.fetchone()
+        conn.close()
+        if not table_exists:
+            mode = "semantic"
+            reason = "Falling back to semantic — SQLite table not found (re-upload to enable analytical mode)"
 
     if mode == "analytical":
         answer  = _analytical_answer(question, namespace, history_text)
@@ -476,7 +484,6 @@ def answer_question(question: str, namespace: str, history: list[dict]) -> dict:
         answer, sources = _semantic_answer(question, namespace, history_text)
 
     return {"answer": answer, "mode": mode, "reason": reason, "sources": sources}
-
 
 # ════════════════════════════════════════════════════════════
 # UTILITY QUERIES
