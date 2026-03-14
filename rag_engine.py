@@ -27,11 +27,11 @@ groq_client    = Groq(api_key=GROQ_API_KEY)
 pc             = Pinecone(api_key=PINECONE_API_KEY)
 pinecone_index = pc.Index(INDEX_NAME)  # direct connection
 
-# ── HuggingFace Inference API v2 for embeddings ──────────────
-# Free, no local model, no RAM overhead
-# Get your free token at huggingface.co → Settings → Access Tokens
-# ── Pinecone Inference API for embeddings ─────────────────────
-# Uses your existing Pinecone key — no new service needed
+# ── Embeddings via Pinecone Inference API ────────────────────
+# Uses your existing Pinecone key — no extra setup needed
+# Model: multilingual-e5-large → dim=1024
+EMBED_MODEL = "multilingual-e5-large"
+
 # ── Domain system prompt ─────────────────────────────────────
 SYSTEM_PROMPT = """You are an expert research assistant specialising in
 nanoemulsion science and pharmaceutical nanotechnology.
@@ -68,7 +68,7 @@ def get_index():
     if INDEX_NAME not in existing:
         pc.create_index(
             name=INDEX_NAME,
-            dimension=384,
+            dimension=1024,
             metric="cosine",
             spec=ServerlessSpec(cloud="aws", region="us-east-1"),
         )
@@ -78,53 +78,16 @@ def get_index():
 
 def get_embedding(text: str) -> list:
     """
-    Uses Pinecone's Inference API to generate embeddings.
-    Model: llama-text-embed-v2 with dim=384 to match existing index.
-    No extra key needed — uses PINECONE_API_KEY.
+    Uses Pinecone Inference API for embeddings.
+    Model: multilingual-e5-large → dim=1024
+    Uses your existing PINECONE_API_KEY — no extra setup.
     """
     result = pc.inference.embed(
-        model="llama-text-embed-v2",
+        model=EMBED_MODEL,
         inputs=[str(text)],
-        parameters={"input_type": "passage", "truncate": "END", "dimension": 384}
+        parameters={"input_type": "passage", "truncate": "END"}
     )
     return result[0].values
-    """
-    Calls HuggingFace Inference API v2 (router) for embeddings.
-    Model: all-MiniLM-L6-v2 → dim=384.
-    Requires HF_API_TOKEN — get free at huggingface.co/settings/tokens
-    """
-    import requests as req
-    import numpy as np
-
-    if not HF_API_TOKEN:
-        raise ValueError("HF_API_TOKEN env var is not set. Get a free token at huggingface.co/settings/tokens")
-
-    headers = {
-        "Authorization": f"Bearer {HF_API_TOKEN}",
-        "Content-Type": "application/json",
-    }
-    resp = req.post(
-        HF_EMBED_URL,
-        headers=headers,
-        json={"inputs": str(text)},
-        timeout=60,
-    )
-    resp.raise_for_status()
-    result = resp.json()
-
-    # Normalise whatever shape HF returns into a flat dim=384 vector
-    if isinstance(result, list):
-        # flat float vector [0.1, 0.2, ...]
-        if isinstance(result[0], float):
-            return result
-        # [[0.1, 0.2, ...]] — one sentence
-        if isinstance(result[0], list) and isinstance(result[0][0], float):
-            return result[0]
-        # [[[...]]] — token-level, mean pool
-        if isinstance(result[0], list) and isinstance(result[0][0], list):
-            arr = np.array(result[0])   # (tokens, dim)
-            return arr.mean(axis=0).tolist()
-    raise ValueError(f"Unexpected HF embedding response: {result}")
 
 
 # ════════════════════════════════════════════════════════════
