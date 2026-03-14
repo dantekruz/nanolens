@@ -83,14 +83,19 @@ def chat(body: ChatRequest):
         raise HTTPException(status_code=400, detail="Namespace is required.")
     if not body.question.strip():
         raise HTTPException(status_code=400, detail="Question is required.")
+
     try:
-        return rag_engine.answer_question(
+        result = rag_engine.answer_question(
             question=body.question,
             namespace=body.namespace,
             history=body.history,
         )
+        return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        error_detail = traceback.format_exc()
+        print("CHAT ERROR:\n", error_detail)
+        raise HTTPException(status_code=500, detail=error_detail)
 
 
 @app.delete("/api/delete-chat/{namespace}")
