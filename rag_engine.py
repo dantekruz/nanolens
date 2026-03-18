@@ -417,12 +417,10 @@ def answer_question(question: str, namespace: str, history: list) -> dict:
 
 def list_namespaces() -> list:
     try:
-        conn   = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = [r[0] for r in cursor.fetchall()]
-        conn.close()
-        return tables
+        # Get namespaces from Pinecone — persistent across redeploys
+        stats = pinecone_index.describe_index_stats()
+        namespaces = list(stats.get("namespaces", {}).keys())
+        return namespaces
     except Exception:
         return []
 
