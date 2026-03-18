@@ -102,10 +102,13 @@ def chat(body: ChatRequest):
         raise HTTPException(status_code=500, detail=error_detail)
 
 
-@app.delete("/api/delete-chat/{namespace}")
-def delete_chat(namespace: str):
+@app.delete("/api/delete-paper/{namespace}")
+def delete_paper(namespace: str):
+    """Permanently delete a paper from Pinecone and SQLite."""
+    if not namespace.strip():
+        raise HTTPException(status_code=400, detail="Namespace is required.")
     try:
-        return rag_engine.delete_chat_history(namespace)
+        return rag_engine.delete_paper(namespace.strip())
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
