@@ -427,16 +427,27 @@ def list_namespaces() -> list:
     except Exception:
         return []
 
-
-def delete_chat_history(namespace: str) -> dict:
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (namespace,))
-    exists = cursor.fetchone()
-    if not exists:
+def delete_paper(namespace: str) -> dict:
+    """
+    Permanently deletes a paper:
+    - Removes all vectors from Pinecone namespace
+    - Drops the SQLite table
+    """
+    # Delete from Pinecone
+    try:
+        idx = get_index()
+        idx.delete(delete_all=True, namespace=namespace)
+    except Exception as e:
+        print(f"Pinecone delete warning: {e}")
+ 
+    # Drop SQLite table
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute(f"DROP TABLE IF EXISTS '{namespace}'")
+        conn.commit()
         conn.close()
-        return {"success": True, "namespace": namespace, "message": "No table found — nothing to delete."}
-    cursor.execute(f"DROP TABLE IF EXISTS '{namespace}'")
-    conn.commit()
-    conn.close()
-    return {"success": True, "namespace": namespace, "message": f"Chat history for '{namespace}' deleted."}
+    except Exception as e:
+        print(f"SQLite drop warning: {e}")
+ 
+    return {"success": True, "namespace": namespace, "message": f"'{namespace}' deleted permanently."}
