@@ -58,6 +58,9 @@ SECTION_HEADERS = [
 # ════════════════════════════════════════════════════════════
 
 def get_index():
+    global pinecone_index
+    if pinecone_index is None:
+        pinecone_index = pc.Index(INDEX_NAME)
     return pinecone_index
 
 
