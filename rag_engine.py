@@ -120,8 +120,8 @@ def extract_pdf(file_bytes: bytes) -> list:
                     if sec:
                         current_section = sec
                     tagged.append(line)
-               tagged_text = f"[Section: {current_section} | Page: {page_num+1}]\n" + "\n".join(tagged)
-               all_text.append(tagged_text.strip())
+                    tagged_text = f"[Section: {current_section} | Page: {page_num+1}]\n" + "\n".join(tagged)
+                    all_text.append(tagged_text.strip())
             for table in page.extract_tables():
                 if len(table) > 1:
                     combined_cols.extend(table[0])
@@ -173,7 +173,7 @@ def index_document(file_bytes: bytes, filename: str, namespace: str) -> dict:
         conn.close()
         chunks   = chunk_text(rows)
         sections = set(
-            re.search(r"\[Section: ([^\|]+)", t).group(1).strip()
+            re.search(r"\[Section: ([^\|]+)", t).group(1).strip() # type: ignore
             for t in rows if re.search(r"\[Section: ([^\|]+)", t)
         )
         for i, chunk in enumerate(chunks, 1):
@@ -255,7 +255,7 @@ Reply ONLY with valid JSON, no other text:
         messages=[{"role": "user", "content": prompt}],
         temperature=0,
     )
-    raw = resp.choices[0].message.content.strip()
+    raw = resp.choices[0].message.content.strip() # type: ignore
     raw = re.sub(r"```(?:json)?", "", raw).strip().rstrip("```").strip()
     try:
         d = json.loads(raw)
@@ -302,7 +302,7 @@ Return ONLY the code inside ```python ... ```.
         messages=[{"role": "user", "content": code_prompt}],
         temperature=0,
     )
-    raw_code = code_resp.choices[0].message.content.strip()
+    raw_code = code_resp.choices[0].message.content.strip() # type: ignore
     match    = re.search(r"```python\n(.*?)```", raw_code, re.DOTALL)
     code     = match.group(1).strip() if match else raw_code.strip()
 
@@ -322,16 +322,16 @@ Return ONLY the code inside ```python ... ```.
         messages=[{"role": "user", "content": f'User asked: "{question}"\nPandas result:\n{result_text}\n\nSummarise clearly in English. Highlight nanoemulsion parameter values.'}],
         temperature=0.2,
     )
-    return summ.choices[0].message.content.strip()
+    return summ.choices[0].message.content.strip() # type: ignore
 
 
 def _semantic_answer(question: str, namespace: str, history_text: str):
     idx       = get_index()
    #Expand query to improve recall
     expanded = f"{question} particle size droplet size nm PDI zeta potential characterization results"
-    query_emb = get_embedding(expanded if any(w in question.lower() for w in ['size','particle','droplet','pdi','zeta','nm']) else question))
+    query_emb = get_embedding(expanded if any(w in question.lower() for w in ['size','particle','droplet','pdi','zeta','nm']) else question)
     result = idx.query(vector=query_emb, top_k=15, namespace=namespace, include_metadata=True)
-    matches   = result.get("matches", [])
+    matches   = result.get("matches", []) # type: ignore
 
     keywords  = [w.lower() for w in question.split()]
     re_ranked = []
@@ -364,7 +364,7 @@ Extracted data:
 Only use given content. Highlight nanoemulsion parameter values. Compare against benchmarks."""}],
             temperature=0.3,
         )
-        summaries.append(resp.choices[0].message.content.strip())
+        summaries.append(resp.choices[0].message.content.strip()) # type: ignore
 
     final_resp = groq_client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -382,7 +382,7 @@ Do NOT invent details. Use tables for multi-formulation comparisons.
 Use section headings. End with "📌 Key Takeaway"."""}],
         temperature=0.2,
     )
-    answer  = final_resp.choices[0].message.content.strip()
+    answer  = final_resp.choices[0].message.content.strip() # type: ignore
     sources = [
         {"id": int(r[1]) if str(r[1]).isdigit() else i, "score": round(r[0], 3), "text": r[2]}
         for i, r in enumerate(re_ranked[:5])
