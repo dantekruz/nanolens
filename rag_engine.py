@@ -1,8 +1,3 @@
-# ============================================================
-# rag_engine.py
-# Pure RAG logic — no Streamlit. Called by backend.py (FastAPI)
-# ============================================================
-
 import io
 import os
 import re
@@ -125,8 +120,8 @@ def extract_pdf(file_bytes: bytes) -> list:
                     if sec:
                         current_section = sec
                     tagged.append(line)
-                tagged_text = f"[Section: {current_section} | Page: {page_num+1}]\n" + "\n".join(tagged)
-                all_text.append(tagged_text.strip())
+               tagged_text = f"[Section: {current_section} | Page: {page_num+1}]\n" + "\n".join(tagged)
+               all_text.append(tagged_text.strip())
             for table in page.extract_tables():
                 if len(table) > 1:
                     combined_cols.extend(table[0])
@@ -182,6 +177,9 @@ def index_document(file_bytes: bytes, filename: str, namespace: str) -> dict:
             for t in rows if re.search(r"\[Section: ([^\|]+)", t)
         )
         for i, chunk in enumerate(chunks, 1):
+            # Strip section tag for embedding — keeps metadata but improves vector quality
+            clean_chunk = re.sub(r'\[Section:[^\]]+\]\n?', '', chunk).strip()
+            emb = get_embedding(clean_chunk or chunk)
             idx.upsert(vectors=[{
                 "id": f"{namespace}-chunk-{i}",
                 "values": get_embedding(chunk),
@@ -329,8 +327,10 @@ Return ONLY the code inside ```python ... ```.
 
 def _semantic_answer(question: str, namespace: str, history_text: str):
     idx       = get_index()
-    query_emb = get_embedding(question)
-    result    = idx.query(vector=query_emb, top_k=10, namespace=namespace, include_metadata=True)
+   #Expand query to improve recall
+    expanded = f"{question} particle size droplet size nm PDI zeta potential characterization results"
+    query_emb = get_embedding(expanded if any(w in question.lower() for w in ['size','particle','droplet','pdi','zeta','nm']) else question))
+    result = idx.query(vector=query_emb, top_k=15, namespace=namespace, include_metadata=True)
     matches   = result.get("matches", [])
 
     keywords  = [w.lower() for w in question.split()]
